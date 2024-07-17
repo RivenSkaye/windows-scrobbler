@@ -2,7 +2,7 @@
 
 namespace Scrobbler.Util;
 
-public class Settings
+public class AppSettings
 {
     /// <summary>
     /// If true, log output to X
@@ -22,7 +22,7 @@ public class Settings
 
 public class SettingsFactory
 {
-    public static Settings GetSettings() => new()
+    public static AppSettings GetSettings() => new()
     {
         UseLogging = ConfigurationManager.AppSettings["useLogging"] == "true",
         PollTime = int.Parse(ConfigurationManager.AppSettings["pollTime"] ?? "10000"),
