@@ -1,10 +1,10 @@
-﻿namespace Scrobbler.Models;
+﻿namespace Scrobbler.Models.LastFm;
 
 /// <summary>
 /// Base DC containing authentication properties that are required in all LastFM API calls.
 /// </summary>
 /// <remarks>See https://www.last.fm/api/authentication for details</remarks>
-public abstract class LastFmBaseDc
+public abstract class LastFmRequestBaseDc
 {
     /// <summary>
     /// LastFM API Key

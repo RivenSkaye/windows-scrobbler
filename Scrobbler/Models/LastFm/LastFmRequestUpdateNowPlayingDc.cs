@@ -1,6 +1,6 @@
-﻿namespace Scrobbler.Models;
+﻿namespace Scrobbler.Models.LastFm;
 
-public class LastFmUpdateNowPlayingDc : LastFmBaseDc
+public class LastFmRequestUpdateNowPlayingDc : LastFmRequestBaseDc
 {
     /// <summary>
     /// The name of the currently playing track

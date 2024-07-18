@@ -1,24 +1,27 @@
 using Windows.Media;
 using Windows.Media.Control;
+using Scrobbler.Core;
 using Scrobbler.Models;
 using Scrobbler.Util;
 
 namespace Scrobbler.Workers;
 
-public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings appSettings, HttpClient client) : BackgroundService
+public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings appSettings, LastFmService lastFmService) : BackgroundService
 {
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private GlobalSystemMediaTransportControlsSession? _session;
 
     private TrackMetadata? _currentlyPlaying;
     
-    private const int MinTrackLengthInSeconds = 1000;
-
+    private const int MinTrackLengthInSeconds = 1;
+    
     private Queue<TrackMetadata> _scrobbleQueue = new();
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await InitializeAsync(stoppingToken);
+
+        await lastFmService.EnsureAuthenticatedAsync();
         
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -71,20 +74,22 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
         _manager.CurrentSessionChanged += OnCurrentSessionChanged;
         InitializeSession(_session);
 
-        _currentlyPlaying = await GetCurrentTrackAsync(_session);
+        await UpdateCurrentTrackAsync(_session);
         
         // Register shutdown method
         stoppingToken.Register(ShutDown);
     }
 
-    private async Task<TrackMetadata?> GetCurrentTrackAsync(GlobalSystemMediaTransportControlsSession session)
+    private async Task UpdateCurrentTrackAsync(GlobalSystemMediaTransportControlsSession session)
     {
+        TrackMetadata? newTrack = null;
+        
         var mediaProperties = await session.TryGetMediaPropertiesAsync();
         if (mediaProperties.PlaybackType == MediaPlaybackType.Music)
         {
             // There is some weirdness here, which is caused by Youtube (or the browser, haven't checked other pages) always being classified as music.
-            // It's possible to query LastFM for track information..
-            // TODO: Check if that is a reliable way to verify that the "music" the user is listening to is actually music
+            // To work around this, I try to query LastFM to see if the track exists.
+            
             var timeline = session.GetTimelineProperties();
             var track = new TrackMetadata(
                 mediaProperties.Title,
@@ -94,32 +99,41 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
                 mediaProperties.TrackNumber,
                 timeline.EndTime
             );
-            logger.LogInformation($"Now playing: " +
-                                  $"\n\t - Track: {track.TrackName}" +
-                                  $"\n\t - Artist: {track.ArtistName} " +
-                                  $"\n\t - Album: {track.AlbumName} " +
-                                  $"\n\t - TrackNum: {track.TrackNumber} " +
-                                  $"\n\t - AlbumArtist: {track.AlbumArtistName}" +
-                                  $"\n\t - duration: {track.TrackDuration})");
-
-            return track;
+            
+            var exists = await lastFmService.TrackExistsAsync(track.TrackName, track.ArtistName);
+            if (exists)
+            {
+                newTrack = track;
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    logger.LogInformation($"Now playing: " +
+                                          $"\n\t - Track: {track?.TrackName}" +
+                                          $"\n\t - Artist: {track?.ArtistName} " +
+                                          $"\n\t - Album: {track?.AlbumName} " +
+                                          $"\n\t - TrackNum: {track?.TrackNumber} " +
+                                          $"\n\t - AlbumArtist: {track?.AlbumArtistName}" +
+                                          $"\n\t - duration: {track?.TrackDuration})");
+                }
+            }
+            else
+            {
+                logger.LogWarning("Got non-existant track");
+            }
         }
 
-        return null;
+        if (_currentlyPlaying is not null && TrackCanBeScrobbled(_currentlyPlaying))
+            EnqueueForScrobbling(_currentlyPlaying);
+        _currentlyPlaying = newTrack;
     }
     
     private void InitializeSession(GlobalSystemMediaTransportControlsSession session)
     {
         session.MediaPropertiesChanged += OnMediaPropertiesChangedAsync;
-        // session.PlaybackInfoChanged += OnPlaybackInfoChanged;
-        session.TimelinePropertiesChanged += OnTimelinePropertiesChanged;
     }
 
     private void CloseSession(GlobalSystemMediaTransportControlsSession session)
     {
         session.MediaPropertiesChanged -= OnMediaPropertiesChangedAsync;
-        // session.PlaybackInfoChanged -= OnPlaybackInfoChanged;
-        session.TimelinePropertiesChanged -= OnTimelinePropertiesChanged;
     }
     
     private void ShutDown()
@@ -162,11 +176,6 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
         _session = session;
         
     }
-
-    private void OnTimelinePropertiesChanged(GlobalSystemMediaTransportControlsSession sender, TimelinePropertiesChangedEventArgs args)
-    {
-        
-    }
     
     private async void OnMediaPropertiesChangedAsync(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
     {
@@ -178,22 +187,8 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
             else logger.LogDebug($"Finished track {oldTrackFormat} - ineligible for scrobble");
         }
 
-        var currentTrack = _currentlyPlaying;
-        var newTrack = await GetCurrentTrackAsync(sender);
-
-        if (currentTrack is null)
-            _currentlyPlaying = newTrack;
-        else if (!currentTrack.IsSameTrack(newTrack))
-        {
-            EnqueueForScrobbling(currentTrack);
-            _currentlyPlaying = newTrack;
-        }
+        await UpdateCurrentTrackAsync(sender);
 
         // TODO: Notify LastFM
     }
-
-    // private void OnPlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, PlaybackInfoChangedEventArgs args)
-    // {
-    //     // TODO: Notify LastFM
-    // }
 }

@@ -1,4 +1,4 @@
-﻿namespace Scrobbler.Models;
+﻿namespace Scrobbler.Models.LastFm;
 
 public class LastFmScrobbleDc
 {
