@@ -65,7 +65,7 @@ public class LastFmService
         return true;
     }
     
-    public async Task<bool> TrackExistsAsync(string track, string artist)
+    public async Task<LastFmTrackDc?> GetTrackAsync(string track, string artist)
     {
         var queryVals = new Dictionary<string, string>()
         {
@@ -78,12 +78,12 @@ public class LastFmService
         try
         {
             var result = await SendGetRequestAsync<LastFmGetTrackInfoResponseDc>(queryVals, signRequest: false);
-            return result?.Track?.Album?.Title != null || !_appSettings.RequireTrackHasAlbum; // Trusting that LastFM sends an error if the track doesn't exist. Attempts to do some extra checking has given a LOT of false negatives
+            return result?.Track;
         }
         catch (LastFmErrorException e)
         {
             if (e.Code == 6) // Track not found error code
-                return false;
+                return null;
 
             throw;
         }

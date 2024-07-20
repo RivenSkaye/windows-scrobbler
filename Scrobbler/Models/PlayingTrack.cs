@@ -21,7 +21,7 @@ public record TrackMetadata()
     /// <summary>
     /// The duration of the track
     /// </summary>
-    public TimeSpan TrackDuration { get; }
+    public TimeSpan TrackDuration { get; set; }
     
     /// <summary>
     /// The name of the track's artist

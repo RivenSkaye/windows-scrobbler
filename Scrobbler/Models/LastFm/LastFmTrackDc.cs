@@ -10,9 +10,15 @@ public class LastFmTrackDc
     [XmlElement("name")]
     public string Name { get; set; }
     
+    /// <summary>
+    /// Track duration, in milliseconds
+    /// </summary>
     [XmlElement("duration")]
     public int? Duration { get; set; }
     
     [XmlElement("album")]
     public LastFmAlbumDc? Album { get; set; }
+    
+    [XmlElement("artist")]
+    public LastFmArtistDc? Artist { get; set; }
 }

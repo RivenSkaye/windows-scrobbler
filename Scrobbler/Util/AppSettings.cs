@@ -23,7 +23,7 @@ public class AppSettings
     public int PollTime { get; set; }
 
     /// <summary>
-    /// Whether a track needs to have an album in the response from LastFM to count it as an existing track
+    /// Whether to attempt stricter validation that media is music
     /// </summary>
     /// <remarks>
     /// <p>
@@ -32,11 +32,11 @@ public class AppSettings
     /// </p>
     /// <p>
     /// This means we can scrobble YouTube videos, which generally isn't what we want.
-    /// The videos usually don't get an album tag, and all songs I've tried so far had an album tag. So to try to reduce
-    /// video scrobbling, we can only count media that has an Album in the LastFM database as music.
+    /// There are some tags that videos pretty much never get, and that actual music usually will have at least one of.
+    /// So to try to reducevideo scrobbling, we can only count media that has at least one of the tags in the LastFM database as music.
     /// </p>
     /// </remarks>
-    public bool RequireTrackHasAlbum { get; set; } = true;
+    public bool StrictMusicValidation { get; set; } = true;
 }
 
 public class SettingsFactory
@@ -47,6 +47,6 @@ public class SettingsFactory
         PollTime = int.Parse(configuration["pollTime"] ?? "1000"),
         ApiKey = configuration["apiKey"] ?? string.Empty,
         SharedSecret = configuration["sharedSecret"] ?? string.Empty,
-        RequireTrackHasAlbum = configuration["requireTrackHasAlbum"] is null or "true"
+        StrictMusicValidation = configuration["requireTrackHasAlbum"] is null or "true"
     };
 }

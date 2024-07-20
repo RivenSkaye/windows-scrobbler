@@ -14,7 +14,7 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
 
     private TrackMetadata? _currentlyPlaying;
     
-    private const int MinTrackLengthInSeconds = 1;
+    private const int MinTrackLengthInSeconds = 30;
     private const int ScrobblingBatchSize = 50;
     
     private DateTime _lastScrobbledTime = DateTime.UtcNow;
@@ -22,21 +22,21 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await lastFmService.EnsureAuthenticatedAsync();
+
         await InitializeAsync(stoppingToken);
 
-        await lastFmService.EnsureAuthenticatedAsync();
-        
         while (!stoppingToken.IsCancellationRequested)
         {
             var playbackInfo = _session?.GetPlaybackInfo();
-            if (playbackInfo is {PlaybackStatus: GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing} && _currentlyPlaying is not null)
+            if (playbackInfo is {PlaybackStatus: GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing})// && _currentlyPlaying is not null)
             {
                 if (TrackCanBeScrobbled(_currentlyPlaying))
                     EnqueueForScrobbling(_currentlyPlaying);
             }
             
-            // if (logger.IsEnabled(LogLevel.Information)) 
-            //     logger.LogInformation($"Playback status: {playbackInfo.PlaybackStatus}. Playing {_currentlyPlaying?.ArtistName} - {_currentlyPlaying?.TrackName} (Playtime: {DateTime.UtcNow - _currentlyPlaying?.PlayingSince})");
+            // if (logger.IsEnabled(LogLevel.Debug)) 
+            //     logger.LogDebug($"Playback status: {playbackInfo.PlaybackStatus}. Playing {_currentlyPlaying?.ArtistName} - {_currentlyPlaying?.TrackName} (Playtime: {DateTime.UtcNow - _currentlyPlaying?.PlayingSince})");
 
             // If we haven't scrobbled for 15 minutes, do so
             if (_lastScrobbledTime < DateTime.UtcNow.AddMinutes(-15))
@@ -89,9 +89,6 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
         var mediaProperties = await session.TryGetMediaPropertiesAsync();
         if (mediaProperties.PlaybackType == MediaPlaybackType.Music)
         {
-            // There is some weirdness here, which is caused by the browser pretty much always being classified as music.
-            // To work around this, I try to query LastFM to see if the track exists.
-            
             var timeline = session.GetTimelineProperties();
             var track = new TrackMetadata(
                 mediaProperties.Title,
@@ -109,12 +106,29 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
                 return;
             }
             
-            var exists = await lastFmService.TrackExistsAsync(track.TrackName, track.ArtistName);
-            if (exists)
+            // There is some weirdness here, which is caused by the browser pretty much always being classified as music.
+            // To work around this, I try to query LastFM to see if the track exists.
+            var lastFmTrackMetadata = await lastFmService.GetTrackAsync(track.TrackName, track.ArtistName);
+            var trackExists = lastFmTrackMetadata is not null && (!appSettings.StrictMusicValidation
+                                                                  || lastFmTrackMetadata.Album?.Title != null
+                                                                  || lastFmTrackMetadata.Duration > 30
+                                                                  || lastFmTrackMetadata.Artist?.MusicBrainzId != null);
+            
+            if (trackExists)
             {
+                // For some reason, Windows sometimes reports crazy long track durations, so tracks don't get scrobbled.
+                // If LastFM has a track duration, and reports that it's shorter than what Windows reports, use that instead.
+                if (lastFmTrackMetadata!.Duration > (MinTrackLengthInSeconds * 1000) && lastFmTrackMetadata?.Duration < track.TrackDuration.TotalMilliseconds)
+                {
+                    var lastFmTrackDuration = TimeSpan.FromMilliseconds(lastFmTrackMetadata.Duration.Value);
+                    
+                    logger.LogDebug($"Replacing Windows track duration {track.TrackDuration} with LastFM duration {lastFmTrackDuration}");
+                    track.TrackDuration = lastFmTrackDuration;
+                }
+                
                 newTrack = track;
                 if (logger.IsEnabled(LogLevel.Information)) 
-                    logger.LogInformation($"Now playing: {track?.ArtistName} - {track?.TrackName}");
+                    logger.LogInformation($"Now playing: {track?.ArtistName} - {track?.TrackName}, duration {track?.TrackDuration}");
                 
                 if (track is not null)
                     await lastFmService.UpdateCurrentlyPlayingAsync(track);
@@ -170,6 +184,11 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
 
     private async Task ProcessScrobbleQueueAsync()
     {
+        _lastScrobbledTime = DateTime.UtcNow;
+
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation($"Processing scrobble queue with {_scrobbleQueue.Count} tracks");   
+        
         var scrobbleBatch = new List<TrackMetadata>();
         for (var i = 0; i < ScrobblingBatchSize; i++)
         {
@@ -179,7 +198,7 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
             scrobbleBatch.Add(track);
         }
 
-        if (!scrobbleBatch.Any())
+        if (scrobbleBatch.Count == 0)
             return;
         
         var success = await lastFmService.ScrobbleTracksAsync(scrobbleBatch);
@@ -207,14 +226,6 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
     
     private async void OnMediaPropertiesChangedAsync(GlobalSystemMediaTransportControlsSession sender, MediaPropertiesChangedEventArgs args)
     {
-        if (_currentlyPlaying is not null)
-        {
-            var oldTrackFormat = $"{_currentlyPlaying.ArtistName} - {_currentlyPlaying.TrackName}";
-            if (TrackCanBeScrobbled(_currentlyPlaying))
-                logger.LogDebug($"Track should be scrobbled: {oldTrackFormat}");
-            else logger.LogDebug($"Finished track {oldTrackFormat} - ineligible for scrobble");
-        }
-
         await UpdateCurrentTrackAsync(sender);
 
         await ProcessScrobbleQueueAsync();
