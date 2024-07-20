@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Windows.Media;
 using Windows.Media.Control;
 using Scrobbler.Core;
@@ -14,8 +15,10 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
     private TrackMetadata? _currentlyPlaying;
     
     private const int MinTrackLengthInSeconds = 1;
+    private const int ScrobblingBatchSize = 50;
     
-    private Queue<TrackMetadata> _scrobbleQueue = new();
+    private DateTime _lastScrobbledTime = DateTime.UtcNow;
+    private ConcurrentQueue<TrackMetadata> _scrobbleQueue = new();
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -32,13 +35,12 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
                     EnqueueForScrobbling(_currentlyPlaying);
             }
             
-            if (logger.IsEnabled(LogLevel.Information))
-            {
-                // var playbackStatus  = _session.GetPlaybackInfo().PlaybackStatus;
-                // var media = await _session.TryGetMediaPropertiesAsync();
-                
-                logger.LogInformation($"Playback status: {playbackInfo.PlaybackStatus}. Playing {_currentlyPlaying?.ArtistName} - {_currentlyPlaying?.TrackName} (Playtime: {DateTime.UtcNow - _currentlyPlaying?.PlayingSince})");
-            }
+            // if (logger.IsEnabled(LogLevel.Information)) 
+            //     logger.LogInformation($"Playback status: {playbackInfo.PlaybackStatus}. Playing {_currentlyPlaying?.ArtistName} - {_currentlyPlaying?.TrackName} (Playtime: {DateTime.UtcNow - _currentlyPlaying?.PlayingSince})");
+
+            // If we haven't scrobbled for 15 minutes, do so
+            if (_lastScrobbledTime < DateTime.UtcNow.AddMinutes(-15))
+                await ProcessScrobbleQueueAsync();
             
             await Task.Delay(appSettings.PollTime, stoppingToken);
         }
@@ -61,7 +63,7 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
     {
         return track is not null
                && track.TrackDuration.TotalSeconds > MinTrackLengthInSeconds
-               && track.PlayingSince < DateTime.UtcNow - TimeSpan.FromSeconds(5); //(track.TrackDuration / 2);
+               && track.PlayingSince < DateTime.UtcNow - (track.TrackDuration / 2);
     }
     
     private async Task InitializeAsync(CancellationToken stoppingToken)
@@ -87,37 +89,39 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
         var mediaProperties = await session.TryGetMediaPropertiesAsync();
         if (mediaProperties.PlaybackType == MediaPlaybackType.Music)
         {
-            // There is some weirdness here, which is caused by Youtube (or the browser, haven't checked other pages) always being classified as music.
+            // There is some weirdness here, which is caused by the browser pretty much always being classified as music.
             // To work around this, I try to query LastFM to see if the track exists.
             
             var timeline = session.GetTimelineProperties();
             var track = new TrackMetadata(
                 mediaProperties.Title,
                 mediaProperties.Artist,
-                mediaProperties.AlbumTitle,
-                mediaProperties.AlbumArtist,
-                mediaProperties.TrackNumber,
+                mediaProperties.AlbumTitle.IsNonEmpty() ? mediaProperties.AlbumTitle : null,
+                mediaProperties.AlbumArtist.IsNonEmpty() ? mediaProperties.AlbumArtist : null,
+                mediaProperties.TrackNumber > 0 ? mediaProperties.TrackNumber : null,
                 timeline.EndTime
             );
+
+            // If the track hasn't actually changed, just reset the timestamp and return
+            if (track.IsSameTrackAs(_currentlyPlaying))
+            {
+                _currentlyPlaying = track;
+                return;
+            }
             
             var exists = await lastFmService.TrackExistsAsync(track.TrackName, track.ArtistName);
             if (exists)
             {
                 newTrack = track;
-                if (logger.IsEnabled(LogLevel.Information))
-                {
-                    logger.LogInformation($"Now playing: " +
-                                          $"\n\t - Track: {track?.TrackName}" +
-                                          $"\n\t - Artist: {track?.ArtistName} " +
-                                          $"\n\t - Album: {track?.AlbumName} " +
-                                          $"\n\t - TrackNum: {track?.TrackNumber} " +
-                                          $"\n\t - AlbumArtist: {track?.AlbumArtistName}" +
-                                          $"\n\t - duration: {track?.TrackDuration})");
-                }
+                if (logger.IsEnabled(LogLevel.Information)) 
+                    logger.LogInformation($"Now playing: {track?.ArtistName} - {track?.TrackName}");
+                
+                if (track is not null)
+                    await lastFmService.UpdateCurrentlyPlayingAsync(track);
             }
             else
             {
-                logger.LogWarning("Got non-existant track");
+                logger.LogWarning($"Got non-existent track {track?.ArtistName} - {track?.TrackName}");
             }
         }
 
@@ -153,16 +157,38 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
     {
         lock (track)
         {
-            if (track.IsScrobbled)
+            if (track.IsQueuedForScrobble)
                 return;
 
-            track.IsScrobbled = true;
-            _scrobbleQueue.Enqueue(track);
+            track.IsQueuedForScrobble = true;
         }
+        
+        _scrobbleQueue.Enqueue(track);
         
         logger.LogInformation($"Added track to scrobbling queue: {track.ArtistName} - {track.TrackName}");
     }
 
+    private async Task ProcessScrobbleQueueAsync()
+    {
+        var scrobbleBatch = new List<TrackMetadata>();
+        for (var i = 0; i < ScrobblingBatchSize; i++)
+        {
+            if (!_scrobbleQueue.TryDequeue(out var track))
+                break;
+            
+            scrobbleBatch.Add(track);
+        }
+
+        if (!scrobbleBatch.Any())
+            return;
+        
+        var success = await lastFmService.ScrobbleTracksAsync(scrobbleBatch);
+        if (!success)
+        {
+            scrobbleBatch.ForEach(_scrobbleQueue.Enqueue);
+        }
+    }
+    
     private void OnCurrentSessionChanged(GlobalSystemMediaTransportControlsSessionManager sender, CurrentSessionChangedEventArgs args)
     {
         if (_session is not null)
@@ -171,6 +197,8 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
         var session = sender.GetCurrentSession();
         if (session is null)
             return;
+        
+        logger.LogInformation($"New session: {session.SourceAppUserModelId}");
         
         InitializeSession(session);
         _session = session;
@@ -189,6 +217,6 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
 
         await UpdateCurrentTrackAsync(sender);
 
-        // TODO: Notify LastFM
+        await ProcessScrobbleQueueAsync();
     }
 }

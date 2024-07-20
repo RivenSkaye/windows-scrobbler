@@ -12,4 +12,7 @@ public class LastFmTrackDc
     
     [XmlElement("duration")]
     public int? Duration { get; set; }
+    
+    [XmlElement("album")]
+    public LastFmAlbumDc? Album { get; set; }
 }

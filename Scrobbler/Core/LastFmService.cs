@@ -1,8 +1,7 @@
 ﻿using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
 using System.Xml.Serialization;
 using Microsoft.Win32;
+using Scrobbler.Models;
 using Scrobbler.Models.LastFm;
 using Scrobbler.Util;
 
@@ -20,15 +19,51 @@ public class LastFmService
         _appSettings = appSettings;
         _logger = logger;
     }
-
-
-    private const string BaseUrl = "https://ws.audioscrobbler.com/2.0";
+    
+    private const string BaseUrl = "https://ws.audioscrobbler.com/2.0/";
     private const string RegistryKeyPath = @"Software\Yoeksa\Scrobbler";
     private const string RegistrySessionKeyValueName = "session_key";
     
-    
     private AuthenticationToken? _token;
     private SessionDc? _session;
+    
+    public async Task<bool> ScrobbleTracksAsync(List<TrackMetadata> tracks)
+    {
+        await EnsureAuthenticatedAsync();
+
+        var formData = new Dictionary<string, string>()
+        {
+            {"method", "track.scrobble"},
+            {"api_key", _appSettings.ApiKey},
+            {"sk", _session!.Key}
+        };
+
+        for (var i = 0; i < tracks.Count; i++)
+        {
+            var track = tracks[i];
+            
+            formData.Add($"artist[{i}]", track.ArtistName);
+            formData.Add($"track[{i}]", track.TrackName);
+            formData.Add($"timestamp[{i}]", track.PlayingSince.ToUnixTimestamp().ToString());
+            formData.Add($"duration[{i}]", ((int)track.TrackDuration.TotalSeconds).ToString());
+            
+            if (track.AlbumName.IsNonEmpty()) formData.Add($"album[{i}]", track.AlbumName!);
+            if (track.TrackNumber.HasValue) formData.Add($"trackNumber[{i}]", track.TrackNumber.Value.ToString());
+            if (track.AlbumArtistName.IsNonEmpty()) formData.Add($"albumArtist[{i}]", track.AlbumArtistName!);
+        }
+
+        try
+        {
+            await SendFormDataAsync(formData);
+        }
+        catch (LastFmErrorException e)
+        {
+            return false;
+        }
+        
+        _logger.LogInformation($"Scrobbled {tracks.Count} tracks");
+        return true;
+    }
     
     public async Task<bool> TrackExistsAsync(string track, string artist)
     {
@@ -43,7 +78,7 @@ public class LastFmService
         try
         {
             var result = await SendGetRequestAsync<LastFmGetTrackInfoResponseDc>(queryVals, signRequest: false);
-            return result?.Track?.Duration is > 30000;
+            return result?.Track?.Album?.Title != null || !_appSettings.RequireTrackHasAlbum; // Trusting that LastFM sends an error if the track doesn't exist. Attempts to do some extra checking has given a LOT of false negatives
         }
         catch (LastFmErrorException e)
         {
@@ -53,13 +88,31 @@ public class LastFmService
             throw;
         }
     }
+
+    public async Task UpdateCurrentlyPlayingAsync(TrackMetadata track)
+    {
+        await EnsureAuthenticatedAsync();
+
+        await SendFormDataAsync(new LastFmUpdateNowPlayingRequestBody
+        {
+            ApiKey = _appSettings.ApiKey,
+            SessionKey = _session!.Key,
+
+            Track = track.TrackName,
+            Artist = track.ArtistName,
+            Album = track.AlbumName,
+            AlbumArtist = track.AlbumArtistName,
+            TrackNumber = track.TrackNumber,
+            Duration = (int) track.TrackDuration.TotalSeconds
+        });
+        
+        _logger.LogInformation("Updated Playing Now in LastFM");
+    }
     
     public async Task EnsureAuthenticatedAsync()
     {
         await EnsureHasTokenAsync();
         var gotSessionKey = await EnsureHasSessionKeyAsync();
-        
-        _logger.LogInformation($"Finished authentication workflow - isAuthenticated: {gotSessionKey}");
 
         // TODO: Handle the case where authentication failed?
         if (!gotSessionKey)
@@ -166,11 +219,8 @@ public class LastFmService
         var copy = new Dictionary<string, string>(queryVals);
         
         var signatureString = $"{string.Join(null, queryVals.OrderBy(kv => kv.Key).Select(kv => kv.Key + kv.Value))}{_appSettings.SharedSecret}";
-
-        var inputBytes = Encoding.UTF8.GetBytes(signatureString);
-        var hashBytes = MD5.HashData(inputBytes);
         
-        copy.Add("api_sig", Convert.ToHexString(hashBytes));
+        copy.Add("api_sig", signatureString.AsMd5HexString());
         return copy;
     }
 
@@ -186,11 +236,36 @@ public class LastFmService
         {
             // TODO: Handle error more gracefully
             var error = await result.Content.ReadFromXmlAsync<LastFmErrorDc>();
-            _logger.LogCritical($"Failed to fetch LastFM authentication key! code: {error?.Error.Code} - {error?.Error.Message}");
+            _logger.LogCritical($"Got an error response from LastFM! code: {error?.Error.Code} - {error?.Error.Message}");
             throw new LastFmErrorException(error.Error.Code, error.Error.Message);
         }
 
         return await result.Content.ReadFromXmlAsync<T>();
+    }
+
+    private Task SendFormDataAsync<TBody>(TBody body) where TBody : LastFmRequestBodyBase
+    {
+        return SendFormDataAsync(body.ToFormData());
+    }
+
+    private async Task SendFormDataAsync(Dictionary<string, string> formData)
+    {
+        var signedFormData = AddSignature(formData);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl);
+        request.Content = new FormUrlEncodedContent(signedFormData);
+
+        var result = await _client.SendAsync(request);
+        if (!result.IsSuccessStatusCode)
+        {
+            var error = await result.Content.ReadFromXmlAsync<LastFmErrorDc>();
+            _logger.LogCritical($"Got an error response from LastFM: {error?.Error.Code} - {error?.Error.Message}");
+            throw new LastFmErrorException(error.Error.Code, error.Error.Message);
+        }
+        
+        #if DEBUG
+        var response = await result.Content.ReadAsStringAsync();
+        #endif
     }
     
     [XmlRoot("lfm")]
