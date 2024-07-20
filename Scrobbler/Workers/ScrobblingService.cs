@@ -122,20 +122,22 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
                 {
                     var lastFmTrackDuration = TimeSpan.FromMilliseconds(lastFmTrackMetadata.Duration.Value);
                     
-                    logger.LogDebug($"Replacing Windows track duration {track.TrackDuration} with LastFM duration {lastFmTrackDuration}");
+                    if (logger.IsEnabled(LogLevel.Debug)) 
+                        logger.LogDebug($"Replacing Windows track duration {track.TrackDuration} with LastFM duration {lastFmTrackDuration}");
                     track.TrackDuration = lastFmTrackDuration;
                 }
                 
                 newTrack = track;
-                if (logger.IsEnabled(LogLevel.Information)) 
-                    logger.LogInformation($"Now playing: {track?.ArtistName} - {track?.TrackName}, duration {track?.TrackDuration}");
+                if (logger.IsEnabled(LogLevel.Debug)) 
+                    logger.LogDebug($"Now playing: {track?.ArtistName} - {track?.TrackName}, duration {track?.TrackDuration}");
                 
                 if (track is not null)
                     await lastFmService.UpdateCurrentlyPlayingAsync(track);
             }
             else
             {
-                logger.LogWarning($"Got non-existent track {track?.ArtistName} - {track?.TrackName}");
+                if (logger.IsEnabled(LogLevel.Warning))
+                    logger.LogWarning($"Got non-existent track {track?.ArtistName} - {track?.TrackName}");
             }
         }
 
@@ -156,7 +158,8 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
     
     private void ShutDown()
     {
-        logger.LogInformation("Cleaning up resources..");
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation("Cleaning up resources..");
         
         if (_manager is null)
             return;
@@ -179,15 +182,16 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
         
         _scrobbleQueue.Enqueue(track);
         
-        logger.LogInformation($"Added track to scrobbling queue: {track.ArtistName} - {track.TrackName}");
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation($"Added track to scrobbling queue: {track.ArtistName} - {track.TrackName}");
     }
 
     private async Task ProcessScrobbleQueueAsync()
     {
         _lastScrobbledTime = DateTime.UtcNow;
 
-        if (logger.IsEnabled(LogLevel.Information))
-            logger.LogInformation($"Processing scrobble queue with {_scrobbleQueue.Count} tracks");   
+        if (logger.IsEnabled(LogLevel.Trace))
+            logger.LogTrace($"Processing scrobble queue with {_scrobbleQueue.Count} tracks");   
         
         var scrobbleBatch = new List<TrackMetadata>();
         for (var i = 0; i < ScrobblingBatchSize; i++)
@@ -217,7 +221,8 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
         if (session is null)
             return;
         
-        logger.LogInformation($"New session: {session.SourceAppUserModelId}");
+        if (logger.IsEnabled(LogLevel.Trace))
+            logger.LogTrace($"New session: {session.SourceAppUserModelId}");
         
         InitializeSession(session);
         _session = session;

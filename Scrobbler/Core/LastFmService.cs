@@ -61,7 +61,8 @@ public class LastFmService
             return false;
         }
         
-        _logger.LogInformation($"Scrobbled {tracks.Count} tracks");
+        if (_logger.IsEnabled(LogLevel.Debug))
+            _logger.LogDebug($"Scrobbled {tracks.Count} tracks");
         return true;
     }
     
@@ -106,7 +107,8 @@ public class LastFmService
             Duration = (int) track.TrackDuration.TotalSeconds
         });
         
-        _logger.LogInformation("Updated Playing Now in LastFM");
+        if (_logger.IsEnabled(LogLevel.Debug))
+            _logger.LogDebug("Updated Playing Now in LastFM");
     }
     
     public async Task EnsureAuthenticatedAsync()
@@ -134,7 +136,8 @@ public class LastFmService
         var regSessionKey = regKey.GetValue(RegistrySessionKeyValueName) as string;
         if (!string.IsNullOrWhiteSpace(regSessionKey))
         {
-            _logger.LogInformation("Found session key in Windows registry");
+            if (_logger.IsEnabled(LogLevel.Information))
+                _logger.LogInformation("Found session key in Windows registry");
             _session = new SessionDc(regSessionKey);
             return true;
         }
@@ -236,7 +239,9 @@ public class LastFmService
         {
             // TODO: Handle error more gracefully
             var error = await result.Content.ReadFromXmlAsync<LastFmErrorDc>();
-            _logger.LogCritical($"Got an error response from LastFM! code: {error?.Error.Code} - {error?.Error.Message}");
+            
+            if (_logger.IsEnabled(LogLevel.Error))
+                _logger.LogError($"Got an error response from LastFM! code: {error?.Error.Code} - {error?.Error.Message}");
             throw new LastFmErrorException(error.Error.Code, error.Error.Message);
         }
 
@@ -259,7 +264,9 @@ public class LastFmService
         if (!result.IsSuccessStatusCode)
         {
             var error = await result.Content.ReadFromXmlAsync<LastFmErrorDc>();
-            _logger.LogCritical($"Got an error response from LastFM: {error?.Error.Code} - {error?.Error.Message}");
+            
+            if (_logger.IsEnabled(LogLevel.Error))
+                _logger.LogError($"Got an error response from LastFM: {error?.Error.Code} - {error?.Error.Message}");
             throw new LastFmErrorException(error.Error.Code, error.Error.Message);
         }
         
