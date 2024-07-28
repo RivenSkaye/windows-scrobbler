@@ -20,3 +20,4 @@ The application requires permission to tell LastFM what you're listening to, and
 # Future Development:
 * Handle all sessions instead of only what Windows considers to be the "most relevant session"
 * Support running as a service
+* Better/More code documentation
