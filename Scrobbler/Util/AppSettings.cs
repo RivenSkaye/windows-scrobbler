@@ -6,17 +6,17 @@ public class AppSettings
     /// If true, log output to X
     /// </summary>
     public bool UseLogging { get; set; }
-    
+
     /// <summary>
     /// The LastFM API Key
     /// </summary>
-    public string ApiKey { get; set; }
-    
+    public string ApiKey { get; set; } = string.Empty;
+
     /// <summary>
     /// LastFM Shared Secret
     /// </summary>
-    public string SharedSecret { get; set; }
-    
+    public string SharedSecret { get; set; } = string.Empty;
+
     /// <summary>
     /// The amount of time, in milliseconds, to wait after polling
     /// </summary>
