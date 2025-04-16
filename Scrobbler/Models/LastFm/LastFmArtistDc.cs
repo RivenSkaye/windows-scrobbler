@@ -5,8 +5,8 @@ namespace Scrobbler.Models.LastFm;
 public class LastFmArtistDc
 {
     [XmlElement("mbid")]
-    public string MusicBrainzId { get; set; }
-    
+    public string MusicBrainzId { get; set; } = string.Empty;
+
     [XmlElement("name")]
-    public string Name { get; set; }
+    public string Name { get; set; } = string.Empty;
 }

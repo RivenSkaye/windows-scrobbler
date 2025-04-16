@@ -6,7 +6,7 @@ namespace Scrobbler.Models.LastFm;
 public class LastFmErrorDc
 {
     [XmlElement("error")]
-    public LastFmError Error { get; set; }
+    public LastFmError Error { get; set; } = new();
 }
 
 public class LastFmError
@@ -16,7 +16,7 @@ public class LastFmError
     /// </summary>
     [XmlText]
     public string Message { get; set; } = string.Empty;
-    
+
     /// <summary>
     /// LastFM Error Code. Consult the lastfm documentation for the failing endpoint
     /// </summary>

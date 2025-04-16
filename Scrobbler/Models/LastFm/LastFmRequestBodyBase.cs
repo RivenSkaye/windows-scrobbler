@@ -12,25 +12,25 @@ public abstract class LastFmRequestBodyBase
     /// A LastFM API key
     /// </summary>
     [JsonPropertyName("api_key")]
-    public string ApiKey { get; set; }
-    
+    public string ApiKey { get; set; } = string.Empty;
+
     /// <summary>
     /// A LastFM session key
     /// </summary>
     [JsonPropertyName("sk")]
-    public string SessionKey { get; set; }
-    
+    public string SessionKey { get; set; } = string.Empty;
+
     /// <summary>
     /// A LastFM method signature
     /// </summary>
     [JsonPropertyName("api_sig")]
-    public string ApiSignature { get; protected set; }
+    public string ApiSignature { get; protected set; } = string.Empty;
 
     /// <summary>
     /// The LastFM method to run
     /// </summary>
     [JsonPropertyName("method")]
     public abstract string Method { get; }
-    
+
     public abstract Dictionary<string, string> ToFormData();
 }
