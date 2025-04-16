@@ -16,7 +16,7 @@ public record TrackMetadata()
     /// <summary>
     /// The name of the track
     /// </summary>
-    public required string TrackName { get; init; }
+    public string TrackName { get; } = string.Empty;
 
     /// <summary>
     /// The duration of the track
@@ -26,7 +26,7 @@ public record TrackMetadata()
     /// <summary>
     /// The name of the track's artist
     /// </summary>
-    public required string ArtistName { get; init; }
+    public string ArtistName { get; } = string.Empty;
 
     /// <summary>
     /// The name of the track's album
