@@ -59,7 +59,7 @@ public class ScrobblingService(ILogger<ScrobblingService> logger, AppSettings ap
     /// </summary>
     /// <remarks>See the LastFM docs for more information: https://www.last.fm/api/scrobbling#when-is-a-scrobble-a-scrobble</remarks>
     /// <remarks>The currently playing track</remarks>
-    private bool TrackCanBeScrobbled(TrackMetadata? track)
+    private static bool TrackCanBeScrobbled(TrackMetadata? track)
     {
         return track is not null
                && track.TrackDuration.TotalSeconds > MinTrackLengthInSeconds
